@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Resources test.
+"""Icon file test.
 
 .. note:: This program is free software; you can redistribute it and/or modify
      it under the terms of the GNU General Public License as published by
@@ -8,18 +8,19 @@
 
 """
 
-__author__ = 'riccardo.klinger@gmail.com'
-__date__ = '2018-11-21'
-__copyright__ = 'Copyright 2018, Riccardo Klinger'
+__author__ = 'changsan9527@gmail.com'
+__date__ = '2026-07-05'
+__copyright__ = 'Copyright 2026, changsan9527'
 
+import os
 import unittest
 
-from PyQt5.QtGui import QIcon
+from qgis.PyQt.QtGui import QIcon
 
 
 
-class BatchVectorLayerSaverDialogTest(unittest.TestCase):
-    """Test rerources work."""
+class VectorBatchSaverResourcesTest(unittest.TestCase):
+    """Test icon asset loads."""
 
     def setUp(self):
         """Runs before each test."""
@@ -30,13 +31,16 @@ class BatchVectorLayerSaverDialogTest(unittest.TestCase):
         pass
 
     def test_icon_png(self):
-        """Test we can click OK."""
-        path = ':/plugins/BatchVectorLayerSaver/icon.png'
+        """Test the plugin icon asset loads."""
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'icon.svg',
+        )
         icon = QIcon(path)
         self.assertFalse(icon.isNull())
 
 if __name__ == "__main__":
-    suite = unittest.makeSuite(BatchVectorLayerSaverResourcesTest)
+    suite = unittest.makeSuite(VectorBatchSaverResourcesTest)
     runner = unittest.TextTestRunner(verbosity=2)
     runner.run(suite)
 

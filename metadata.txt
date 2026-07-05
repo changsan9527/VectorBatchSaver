@@ -1,40 +1,25 @@
-# This file contains metadata for your plugin. Since 
-# version 2.0 of QGIS this is the proper way to supply 
-# information about a plugin. The old method of 
-# embedding metadata in __init__.py will 
-# is no longer supported since version 2.0.
-
-# This file should be included when you package your plugin.# Mandatory items:
-
 [general]
-name=Batch Vector Layer Saver
+name=VectorBatchSaver
 qgisMinimumVersion=3.0
-description=Saves multiple layers in different formats in a batch mode. 
+qgisMaximumVersion=4.99
+description=Saves multiple layers in different formats in a batch mode.
 
-version=0.9
-author=Riccardo Klinger
-email=riccardo.klinger@gmail.com
+version=1.0
+author=changsan9527
+email=changsan9527@gmail.com
 
-about=Saves multiple vector layers in multiple formats of your choice at once in a customizable folder destination. Adopted from  https://github.com/rjspiers/qgis-batch-save-layers for QGIS3.
+about=Saves multiple vector layers in multiple formats of your choice at once in a customizable folder destination. Originally by Riccardo Klinger (https://github.com/riccardoklinger/batch-vector-layer-saver).
 
-tracker=https://github.com/riccardoklinger/batch-vector-layer-saver/issues
-repository=https://github.com/riccardoklinger/batch-vector-layer-saver
-# End of mandatory metadata
+tracker=https://github.com/changsan9527/VectorBatchSaver/issues
+repository=https://github.com/changsan9527/VectorBatchSaver
+homepage=https://github.com/changsan9527/VectorBatchSaver
 
-# Recommended items:
-
-# Uncomment the following line and add your changelog:
-changelog= v0.9 [2018-11-23]: initial version
-
-# Tags are comma separated with spaces allowed
 tags=python, vector, batch, save
-
-homepage=https://github.com/riccardoklinger/batch-vector-layer-saver
 category=Vector
-icon=icon.png
-# experimental flag
+icon=icon.svg
+
 experimental=False
-
-# deprecated flag (applies to the whole plugin, not just a single version)
 deprecated=False
+license=GPL-3
 
+changelog=v1.0 [2026-07-05]: Compatible with QGIS 4.

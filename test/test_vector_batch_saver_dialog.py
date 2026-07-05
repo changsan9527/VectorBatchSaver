@@ -8,26 +8,26 @@
 
 """
 
-__author__ = 'riccardo.klinger@gmail.com'
-__date__ = '2018-11-21'
-__copyright__ = 'Copyright 2018, Riccardo Klinger'
+__author__ = 'changsan9527@gmail.com'
+__date__ = '2026-07-05'
+__copyright__ = 'Copyright 2026, changsan9527'
 
 import unittest
 
-from PyQt5.QtGui import QDialogButtonBox, QDialog
+from qgis.PyQt.QtWidgets import QDialog, QDialogButtonBox
 
-from batch_vector_layer_saver_dialog import BatchVectorLayerSaverDialog
+from vector_batch_saver_dialog import VectorBatchSaverDialog
 
 from utilities import get_qgis_app
 QGIS_APP = get_qgis_app()
 
 
-class BatchVectorLayerSaverDialogTest(unittest.TestCase):
+class VectorBatchSaverDialogTest(unittest.TestCase):
     """Test dialog works."""
 
     def setUp(self):
         """Runs before each test."""
-        self.dialog = BatchVectorLayerSaverDialog(None)
+        self.dialog = VectorBatchSaverDialog(None)
 
     def tearDown(self):
         """Runs after each test."""
@@ -49,7 +49,7 @@ class BatchVectorLayerSaverDialogTest(unittest.TestCase):
         self.assertEqual(result, QDialog.Rejected)
 
 if __name__ == "__main__":
-    suite = unittest.makeSuite(BatchVectorLayerSaverDialogTest)
+    suite = unittest.makeSuite(VectorBatchSaverDialogTest)
     runner = unittest.TextTestRunner(verbosity=2)
     runner.run(suite)
 

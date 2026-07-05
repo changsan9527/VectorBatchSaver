@@ -1,12 +1,12 @@
 #/***************************************************************************
-# BatchVectorLayerSaver
+# VectorBatchSaver
 #
 # Saves all Layers in defined formats
 #							 -------------------
 #		begin				: 2018-11-21
 #		git sha				: $Format:%H$
-#		copyright			: (C) 2018 by Riccardo Klinger
-#		email				: riccardo.klinger@gmail.com
+#		copyright			: (C) 2026 by changsan9527
+#		email				: changsan9527@gmail.com
 # ***************************************************************************/
 #
 #/***************************************************************************
@@ -38,23 +38,21 @@ LOCALES =
 # translation
 SOURCES = \
 	__init__.py \
-	batch_vector_layer_saver.py batch_vector_layer_saver_dialog.py
+	vector_batch_saver.py vector_batch_saver_dialog.py
 
-PLUGINNAME = batch_vector_layer_saver
+PLUGINNAME = vector_batch_saver
 
 PY_FILES = \
 	__init__.py \
-	batch_vector_layer_saver.py batch_vector_layer_saver_dialog.py
+	vector_batch_saver.py vector_batch_saver_dialog.py
 
-UI_FILES = batch_vector_layer_saver_dialog_base.ui
+UI_FILES = vector_batch_saver_dialog_base.ui
 
-EXTRAS = metadata.txt icon.png
+EXTRAS = metadata.txt icon.svg LICENSE
 
 EXTRA_DIRS =
 
-COMPILED_RESOURCE_FILES = resources.py
-
-PEP8EXCLUDE=pydev,resources.py,conf.py,third_party,ui
+PEP8EXCLUDE=pydev,conf.py,third_party,ui
 
 
 #################################################
@@ -65,16 +63,9 @@ HELP = help/build/html
 
 PLUGIN_UPLOAD = $(c)/plugin_upload.py
 
-RESOURCE_SRC=$(shell grep '^ *<file' resources.qrc | sed 's@</file>@@g;s/.*>//g' | tr '\n' ' ')
-
 QGISDIR=.qgis2
 
-default: compile
-
-compile: $(COMPILED_RESOURCE_FILES)
-
-%.py : %.qrc $(RESOURCES_SRC)
-	pyrcc5 -o $*.py  $<
+default:
 
 %.qm : %.ts
 	$(LRELEASE) $<
@@ -97,7 +88,7 @@ test: compile transcompile
 	@echo "e.g. source run-env-linux.sh <path to qgis install>; make test"
 	@echo "----------------------"
 
-deploy: compile doc transcompile
+deploy: doc transcompile
 	@echo
 	@echo "------------------------------------------"
 	@echo "Deploying plugin to your .qgis2 directory."
@@ -108,7 +99,6 @@ deploy: compile doc transcompile
 	mkdir -p $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 	cp -vf $(PY_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 	cp -vf $(UI_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vf $(COMPILED_RESOURCE_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 	cp -vf $(EXTRAS) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 	cp -vfr i18n $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 	cp -vfr $(HELP) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)/help
@@ -144,7 +134,7 @@ zip: deploy dclean
 	rm -f $(PLUGINNAME).zip
 	cd $(HOME)/$(QGISDIR)/python/plugins; zip -9r $(CURDIR)/$(PLUGINNAME).zip $(PLUGINNAME)
 
-package: compile
+package:
 	# Create a zip package of the plugin named $(PLUGINNAME).zip.
 	# This requires use of git (your plugin development directory must be a
 	# git repository).
@@ -193,7 +183,7 @@ clean:
 	@echo "------------------------------------"
 	@echo "Removing uic and rcc generated files"
 	@echo "------------------------------------"
-	rm $(COMPILED_UI_FILES) $(COMPILED_RESOURCE_FILES)
+	rm $(COMPILED_UI_FILES)
 
 doc:
 	@echo
