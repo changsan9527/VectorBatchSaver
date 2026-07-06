@@ -22,10 +22,14 @@
  ***************************************************************************/
 """
 
+import hashlib
+import os
+import os.path
+
 from qgis.PyQt import QtCore, QtWidgets
 from qgis.PyQt.QtCore import QCoreApplication, QSettings, QTranslator, qVersion
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QFileDialog
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QToolButton
 
 # get some qgis libs:
 from qgis.core import (
@@ -38,17 +42,53 @@ from qgis.core import (
 
 # Import the code for the dialog
 from .vector_batch_saver_dialog import VectorBatchSaverDialog
-import os
-import os.path
 
 
 class VectorBatchSaver:
     """QGIS Plugin Implementation."""
 
+    CHECKBOX_COLUMN = 0
+    ORIGINAL_NAME_COLUMN = 1
+    NEW_NAME_COLUMN = 2
+    CLEAR_COLUMN = 3
+    MEMORY_KEY_ROLE = 257
     if hasattr(QtCore.Qt, "ItemDataRole"):
         LAYER_ID_ROLE = QtCore.Qt.ItemDataRole.UserRole
     else:
         LAYER_ID_ROLE = QtCore.Qt.UserRole
+    if hasattr(QtCore.Qt, "ItemFlag"):
+        ITEM_IS_EDITABLE_FLAG = QtCore.Qt.ItemFlag.ItemIsEditable
+    else:
+        ITEM_IS_EDITABLE_FLAG = QtCore.Qt.ItemIsEditable
+    if hasattr(QtCore.Qt, "CheckState"):
+        CHECKED_STATE = QtCore.Qt.CheckState.Checked
+        UNCHECKED_STATE = QtCore.Qt.CheckState.Unchecked
+        PARTIALLY_CHECKED_STATE = QtCore.Qt.CheckState.PartiallyChecked
+    else:
+        CHECKED_STATE = QtCore.Qt.Checked
+        UNCHECKED_STATE = QtCore.Qt.Unchecked
+        PARTIALLY_CHECKED_STATE = QtCore.Qt.PartiallyChecked
+    if hasattr(QtWidgets.QAbstractItemView, "SelectionMode"):
+        TABLE_SINGLE_SELECTION = (
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        TABLE_SELECT_ROWS = QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        TABLE_EDIT_ON_DOUBLE_CLICK = (
+            QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked
+        )
+    else:
+        TABLE_SINGLE_SELECTION = QtWidgets.QAbstractItemView.SingleSelection
+        TABLE_SELECT_ROWS = QtWidgets.QAbstractItemView.SelectRows
+        TABLE_EDIT_ON_DOUBLE_CLICK = QtWidgets.QAbstractItemView.DoubleClicked
+    if hasattr(QtWidgets.QHeaderView, "ResizeMode"):
+        HEADER_RESIZE_FIXED = QtWidgets.QHeaderView.ResizeMode.Fixed
+        HEADER_RESIZE_INTERACTIVE = QtWidgets.QHeaderView.ResizeMode.Interactive
+    else:
+        HEADER_RESIZE_FIXED = QtWidgets.QHeaderView.Fixed
+        HEADER_RESIZE_INTERACTIVE = QtWidgets.QHeaderView.Interactive
+    SETTINGS_NAMESPACE = "VectorBatchSaver"
+    REMEMBER_TARGET_NAMES_KEY = SETTINGS_NAMESPACE + "/rememberTargetNames"
+    TARGET_NAME_MEMORY_PREFIX = SETTINGS_NAMESPACE + "/targetNameMemory"
     INFO_LEVEL = getattr(Qgis.MessageLevel, "Info", Qgis.Info)
     WARNING_LEVEL = getattr(Qgis.MessageLevel, "Warning", Qgis.Warning)
     CRITICAL_LEVEL = getattr(Qgis.MessageLevel, "Critical", Qgis.Critical)
@@ -80,6 +120,8 @@ class VectorBatchSaver:
 
         # Create the dialog (after translation) and keep reference
         self.dlg = VectorBatchSaverDialog()
+        self._updating_layer_checks = False
+        self._suppress_table_item_changed = False
 
         # Declare instance attributes
         self.actions = []
@@ -88,18 +130,154 @@ class VectorBatchSaver:
         self.toolbar = self.iface.addToolBar("VectorBatchSaver")
         self.toolbar.setObjectName("VectorBatchSaver")
         self.dlg.lineEdit.clear()
-        self.dlg.listWidget.setStyleSheet("""
-            QListWidget::item:selected {
-                background-color: #2F80ED;
-                color: white;
+        self.dlg.layerTableWidget.setStyleSheet("""
+            QTableWidget::item:selected {
+                background-color: #DCEBFF;
+                color: #1F1F1F;
             }
-            QListWidget::item:selected:!active {
-                background-color: #2F80ED;
-                color: white;
+            QTableWidget::item:selected:!active {
+                background-color: #EAF2FF;
+                color: #1F1F1F;
             }
         """)
+        self.dlg.layerTableWidget.setSelectionMode(self.TABLE_SINGLE_SELECTION)
+        self.dlg.layerTableWidget.setSelectionBehavior(self.TABLE_SELECT_ROWS)
+        self.dlg.layerTableWidget.setEditTriggers(self.TABLE_EDIT_ON_DOUBLE_CLICK)
+        self.dlg.layerTableWidget.setColumnWidth(self.CHECKBOX_COLUMN, 32)
+        self.dlg.layerTableWidget.setColumnWidth(self.CLEAR_COLUMN, 36)
+        self.dlg.layerTableWidget.horizontalHeader().setSectionResizeMode(
+            self.CHECKBOX_COLUMN, self.HEADER_RESIZE_FIXED
+        )
+        self.dlg.layerTableWidget.horizontalHeader().setSectionResizeMode(
+            self.ORIGINAL_NAME_COLUMN, self.HEADER_RESIZE_INTERACTIVE
+        )
+        self.dlg.layerTableWidget.horizontalHeader().setSectionResizeMode(
+            self.NEW_NAME_COLUMN, self.HEADER_RESIZE_INTERACTIVE
+        )
+        self.dlg.layerTableWidget.horizontalHeader().setSectionResizeMode(
+            self.CLEAR_COLUMN, self.HEADER_RESIZE_FIXED
+        )
+        self.dlg.layerTableWidget.verticalHeader().setVisible(False)
+        self.dlg.layerTableWidget.verticalHeader().setDefaultSectionSize(20)
+        table_font = self.dlg.layerTableWidget.font()
+        table_font.setPointSize(max(8, table_font.pointSize() - 1))
+        self.dlg.layerTableWidget.setFont(table_font)
+        header_font = self.dlg.layerTableWidget.horizontalHeader().font()
+        header_font.setPointSize(max(8, header_font.pointSize() - 1))
+        self.dlg.layerTableWidget.horizontalHeader().setFont(header_font)
+        self.load_plugin_settings()
         self.dlg.toolButton.clicked.connect(self.select_output_directory)
         self.dlg.changeCRS.stateChanged.connect(self.trigger_crs)
+        self.dlg.clearAllTargetNamesButton.clicked.connect(self.clear_all_target_names)
+        self.dlg.rememberTargetNamesCheckBox.toggled.connect(
+            self.handle_remember_target_names_toggled
+        )
+        self.dlg.layerTableHeader.checkStateChanged.connect(self.set_all_layer_checks)
+        self.dlg.layerTableWidget.itemChanged.connect(self.handle_layer_item_changed)
+        self.dlg.layerTableWidget.cellClicked.connect(self.handle_layer_cell_clicked)
+        self.dlg.layerTableWidget.cellDoubleClicked.connect(
+            self.handle_layer_cell_double_clicked
+        )
+
+    def load_plugin_settings(self):
+        remember_target_names = self.read_bool_setting(
+            self.REMEMBER_TARGET_NAMES_KEY, True
+        )
+        self.dlg.rememberTargetNamesCheckBox.setChecked(remember_target_names)
+
+    def read_bool_setting(self, key, default_value):
+        value = QSettings().value(key, default_value)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in ("1", "true", "yes", "on")
+        return bool(value)
+
+    def remember_target_names_enabled(self):
+        return self.dlg.rememberTargetNamesCheckBox.isChecked()
+
+    def handle_remember_target_names_toggled(self, checked):
+        return
+
+    def project_identity(self):
+        project = QgsProject.instance()
+        return project.fileName() or project.homePath() or "__unsaved_project__"
+
+    def project_memory_group(self):
+        project_hash = self.hash_for_memory(self.project_identity())
+        return "{0}/{1}".format(self.TARGET_NAME_MEMORY_PREFIX, project_hash)
+
+    def layer_memory_key(self, layer, original_name):
+        layer_identity = "{0}||{1}".format(layer.source(), original_name)
+        layer_hash = self.hash_for_memory(layer_identity)
+        return "{0}/{1}".format(self.project_memory_group(), layer_hash)
+
+    def hash_for_memory(self, value):
+        data = value.encode("utf-8")
+        try:
+            return hashlib.sha1(data, usedforsecurity=False).hexdigest()
+        except TypeError:
+            return hashlib.sha1(data).hexdigest()  # nosec B324 - compatibility fallback for non-security hashing
+
+    def saved_target_name(self, memory_key):
+        value = QSettings().value(memory_key, "")
+        if value is None:
+            return ""
+        return value
+
+    def save_target_name_memory(self, memory_key, target_name):
+        normalized_name = target_name.strip()
+        if normalized_name:
+            QSettings().setValue(memory_key, target_name)
+        else:
+            QSettings().remove(memory_key)
+
+    def clear_target_name_memory(self, memory_key):
+        QSettings().remove(memory_key)
+
+    def apply_saved_target_names(self):
+        if not self.remember_target_names_enabled():
+            return
+
+        self._suppress_table_item_changed = True
+        for row in range(self.dlg.layerTableWidget.rowCount()):
+            target_item = self.dlg.layerTableWidget.item(row, self.NEW_NAME_COLUMN)
+            original_item = self.dlg.layerTableWidget.item(
+                row, self.ORIGINAL_NAME_COLUMN
+            )
+            if target_item is None or original_item is None:
+                continue
+            saved_name = self.saved_target_name(
+                original_item.data(self.MEMORY_KEY_ROLE)
+            )
+            if saved_name:
+                target_item.setText(saved_name)
+        self._suppress_table_item_changed = False
+
+    def commit_target_name_preferences(self):
+        settings = QSettings()
+        settings.setValue(
+            self.REMEMBER_TARGET_NAMES_KEY, self.remember_target_names_enabled()
+        )
+
+        if not self.remember_target_names_enabled():
+            settings.remove(self.project_memory_group())
+            return
+
+        for row in range(self.dlg.layerTableWidget.rowCount()):
+            original_item = self.dlg.layerTableWidget.item(
+                row, self.ORIGINAL_NAME_COLUMN
+            )
+            target_item = self.dlg.layerTableWidget.item(row, self.NEW_NAME_COLUMN)
+            if original_item is None or target_item is None:
+                continue
+
+            memory_key = original_item.data(self.MEMORY_KEY_ROLE)
+            target_name = target_item.text().strip()
+            if target_name:
+                settings.setValue(memory_key, target_item.text())
+            else:
+                settings.remove(memory_key)
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -239,15 +417,7 @@ class VectorBatchSaver:
 
         self.dlg.mQgsProjectionSelectionWidget.setCrs(QgsProject.instance().crs())
 
-        # Add layer_list array to listWidget
-        self.dlg.listWidget.clear()
-        for layer in vector_layers:
-            item = QtWidgets.QListWidgetItem()
-            item.setText(layer.name())
-            item.setData(self.LAYER_ID_ROLE, layer.id())
-            item.setSelected(True)
-            self.dlg.listWidget.addItem(item)
-        self.dlg.listWidget.selectAll()
+        self.populate_layer_table(vector_layers)
         # Run the dialog event loop
         result = self.dlg.exec()
         # See if OK was pressed
@@ -262,12 +432,152 @@ class VectorBatchSaver:
                 )
             if os.path.exists(output_dir):
                 self.save_layers()
+            self.commit_target_name_preferences()
+
+    def populate_layer_table(self, vector_layers):
+        self._updating_layer_checks = True
+        self._suppress_table_item_changed = True
+        self.dlg.layerTableWidget.blockSignals(True)
+        self.dlg.layerTableWidget.setRowCount(0)
+        for layer in vector_layers:
+            row = self.dlg.layerTableWidget.rowCount()
+            self.dlg.layerTableWidget.insertRow(row)
+
+            checked_item = QtWidgets.QTableWidgetItem("")
+            checked_item.setCheckState(self.CHECKED_STATE)
+            checked_item.setFlags(checked_item.flags() & ~self.ITEM_IS_EDITABLE_FLAG)
+            self.dlg.layerTableWidget.setItem(row, self.CHECKBOX_COLUMN, checked_item)
+
+            original_name_item = QtWidgets.QTableWidgetItem(layer.name())
+            original_name_item.setData(self.LAYER_ID_ROLE, layer.id())
+            original_name_item.setData(
+                self.MEMORY_KEY_ROLE, self.layer_memory_key(layer, layer.name())
+            )
+            original_name_item.setFlags(
+                original_name_item.flags() & ~self.ITEM_IS_EDITABLE_FLAG
+            )
+            self.dlg.layerTableWidget.setItem(
+                row, self.ORIGINAL_NAME_COLUMN, original_name_item
+            )
+
+            saved_name = ""
+            if self.remember_target_names_enabled():
+                saved_name = self.saved_target_name(
+                    original_name_item.data(self.MEMORY_KEY_ROLE)
+                )
+            new_name_item = QtWidgets.QTableWidgetItem(saved_name)
+            self.dlg.layerTableWidget.setItem(row, self.NEW_NAME_COLUMN, new_name_item)
+            self.dlg.layerTableWidget.setCellWidget(
+                row, self.CLEAR_COLUMN, self.create_clear_row_button(row)
+            )
+        self.dlg.layerTableWidget.blockSignals(False)
+        self._updating_layer_checks = False
+        self._suppress_table_item_changed = False
+        self.sync_header_check_state()
+
+    def create_clear_row_button(self, row):
+        button = QToolButton(self.dlg.layerTableWidget)
+        button.setText("x")
+        button.setToolTip("Clear Target Name")
+        button.clicked.connect(
+            lambda checked=False, r=row: self.clear_row_target_name(r)
+        )
+        return button
+
+    def handle_layer_item_changed(self, item):
+        if self._suppress_table_item_changed:
+            return
+        if item.column() == self.CHECKBOX_COLUMN:
+            self.sync_header_check_state()
+
+    def handle_layer_cell_clicked(self, row, column):
+        self.dlg.layerTableWidget.selectRow(row)
+        self.dlg.layerTableWidget.setCurrentCell(row, column)
+
+    def handle_layer_cell_double_clicked(self, row, column):
+        self.dlg.layerTableWidget.selectRow(row)
+        self.dlg.layerTableWidget.setCurrentCell(row, column)
+        if column != self.NEW_NAME_COLUMN:
+            return
+
+        item = self.dlg.layerTableWidget.item(row, column)
+        if item is not None:
+            self.dlg.layerTableWidget.editItem(item)
+
+    def checked_layer_rows(self):
+        checked_rows = []
+        for row in range(self.dlg.layerTableWidget.rowCount()):
+            check_item = self.dlg.layerTableWidget.item(row, self.CHECKBOX_COLUMN)
+            if check_item is not None and check_item.checkState() == self.CHECKED_STATE:
+                checked_rows.append(row)
+        return checked_rows
+
+    def clear_row_target_name(self, row):
+        target_item = self.dlg.layerTableWidget.item(row, self.NEW_NAME_COLUMN)
+        if target_item is None:
+            return
+
+        self._suppress_table_item_changed = True
+        target_item.setText("")
+        self._suppress_table_item_changed = False
+
+    def clear_all_target_names(self):
+        self._suppress_table_item_changed = True
+        for row in range(self.dlg.layerTableWidget.rowCount()):
+            target_item = self.dlg.layerTableWidget.item(row, self.NEW_NAME_COLUMN)
+            if target_item is not None:
+                target_item.setText("")
+        self._suppress_table_item_changed = False
+
+    def set_all_layer_checks(self, state):
+        self._updating_layer_checks = True
+        self.dlg.layerTableWidget.blockSignals(True)
+        for row in range(self.dlg.layerTableWidget.rowCount()):
+            check_item = self.dlg.layerTableWidget.item(row, self.CHECKBOX_COLUMN)
+            if check_item is not None:
+                check_item.setCheckState(state)
+        self.dlg.layerTableWidget.blockSignals(False)
+        self._updating_layer_checks = False
+        self.sync_header_check_state()
+
+    def sync_header_check_state(self):
+        checked_rows = 0
+        row_count = self.dlg.layerTableWidget.rowCount()
+        for row in range(row_count):
+            check_item = self.dlg.layerTableWidget.item(row, self.CHECKBOX_COLUMN)
+            if check_item is not None and check_item.checkState() == self.CHECKED_STATE:
+                checked_rows += 1
+
+        if checked_rows == 0:
+            state = self.UNCHECKED_STATE
+        elif checked_rows == row_count:
+            state = self.CHECKED_STATE
+        else:
+            state = self.PARTIALLY_CHECKED_STATE
+
+        self.dlg.layerTableHeader.setCheckState(state)
+
+    def get_export_layer_name(self, row):
+        original_item = self.dlg.layerTableWidget.item(row, self.ORIGINAL_NAME_COLUMN)
+        new_name_item = self.dlg.layerTableWidget.item(row, self.NEW_NAME_COLUMN)
+
+        original_name = original_item.text() if original_item is not None else ""
+        if new_name_item is None:
+            return original_name
+
+        custom_name = new_name_item.text()
+        if custom_name is None:
+            return original_name
+
+        custom_name = custom_name.strip()
+        return custom_name or original_name
 
     def save_layers(self):
-        if not self.dlg.listWidget.selectedItems():
+        checked_rows = self.checked_layer_rows()
+        if not checked_rows:
             self.iface.messageBar().pushMessage(
                 "No layers selected",
-                "Select at least one vector layer to export.",
+                "Check at least one vector layer to export.",
                 level=self.WARNING_LEVEL,
                 duration=5,
             )
@@ -325,6 +635,28 @@ class VectorBatchSaver:
         )
         return writer[0]
 
+    def unique_output_path(self, output_dir, base_name, extension, used_names):
+        candidate_base = base_name
+        suffix = 2
+        while True:
+            candidate_filename = candidate_base + extension
+            candidate_key = candidate_filename.lower()
+            candidate_path = os.path.join(output_dir, candidate_filename)
+            if candidate_key not in used_names and not os.path.exists(candidate_path):
+                used_names.add(candidate_key)
+                return candidate_path, candidate_filename
+
+            candidate_base = "{} ({})".format(base_name, suffix)
+            suffix += 1
+
+    def stable_layer_sort_key(self, layer, original_name):
+        source = layer.source() if layer is not None else ""
+        return (
+            (layer.name() if layer is not None else "").casefold(),
+            source.casefold(),
+            (original_name or "").casefold(),
+        )
+
     def save_layer_format(self, format):
         layers = {
             tree_layer.layer().id(): tree_layer.layer()
@@ -344,20 +676,52 @@ class VectorBatchSaver:
             "GPKG": (".gpkg", []),
         }
         extension, layer_options = formats[format]
+        used_names = {
+            existing_file.lower()
+            for existing_file in os.listdir(output_dir)
+            if existing_file.lower().endswith(extension.lower())
+        }
 
-        for item in self.dlg.listWidget.selectedItems():
-            layer = layers.get(item.data(self.LAYER_ID_ROLE))
+        export_rows = []
+        for row in self.checked_layer_rows():
+            original_item = self.dlg.layerTableWidget.item(
+                row, self.ORIGINAL_NAME_COLUMN
+            )
+            if original_item is None:
+                continue
+
+            layer = layers.get(original_item.data(self.LAYER_ID_ROLE))
             if layer is None:
                 continue
+
+            export_layer_name = self.get_export_layer_name(row)
+            export_rows.append(
+                {
+                    "layer": layer,
+                    "original_name": original_item.text(),
+                    "target_name": export_layer_name,
+                    "sort_key": (
+                        export_layer_name.casefold(),
+                        self.stable_layer_sort_key(layer, original_item.text()),
+                    ),
+                }
+            )
+
+        export_rows.sort(key=lambda item: item["sort_key"])
+
+        for export_item in export_rows:
+            output_path, output_filename = self.unique_output_path(
+                output_dir, export_item["target_name"], extension, used_names
+            )
 
             if self.dlg.changeCRS.isChecked():
                 crs = self.dlg.mQgsProjectionSelectionWidget.crs()
             else:
-                crs = layer.crs()
+                crs = export_item["layer"].crs()
 
             writer_error = self.write_vector_layer(
-                layer,
-                os.path.join(output_dir, layer.name() + extension),
+                export_item["layer"],
+                output_path,
                 format,
                 crs,
                 layer_options,
@@ -365,14 +729,14 @@ class VectorBatchSaver:
             if writer_error == QgsVectorFileWriter.NoError:
                 self.iface.messageBar().pushMessage(
                     "Layer Saved",
-                    layer.name() + " saved to " + output_dir + " as " + format,
+                    output_filename + " saved to " + output_dir + " as " + format,
                     level=self.INFO_LEVEL,
                     duration=2,
                 )
             else:
                 self.iface.messageBar().pushMessage(
                     "Error saving layer:",
-                    layer.name() + extension + " to " + output_dir,
+                    output_filename + " to " + output_dir,
                     level=self.CRITICAL_LEVEL,
                     duration=2,
                 )

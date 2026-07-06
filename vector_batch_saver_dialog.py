@@ -24,11 +24,338 @@
 
 import os
 
-from qgis.PyQt import QtWidgets, uic
+from qgis.PyQt import QtCore, QtWidgets, uic
 
 FORM_CLASS, _ = uic.loadUiType(
     os.path.join(os.path.dirname(__file__), "vector_batch_saver_dialog_base.ui")
 )
+
+
+class CheckableHeaderView(QtWidgets.QHeaderView):
+    checkStateChanged = QtCore.pyqtSignal(object)
+
+    def __init__(self, orientation, parent=None, checkbox_section=0):
+        super(CheckableHeaderView, self).__init__(orientation, parent)
+        self.checkbox_section = checkbox_section
+        self._check_state = self.unchecked_state()
+        self.setSectionsClickable(True)
+        self._checkbox_widget = QtWidgets.QCheckBox(self.viewport())
+        self._checkbox_widget.setTristate(True)
+        self._checkbox_widget.setText("")
+        if hasattr(QtCore.Qt, "FocusPolicy"):
+            no_focus = QtCore.Qt.FocusPolicy.NoFocus
+        else:
+            no_focus = QtCore.Qt.NoFocus
+        self._checkbox_widget.setFocusPolicy(no_focus)
+        if hasattr(QtCore.Qt, "WidgetAttribute"):
+            transparent_mouse = QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        else:
+            transparent_mouse = QtCore.Qt.WA_TransparentForMouseEvents
+        self._checkbox_widget.setAttribute(transparent_mouse, True)
+        self._checkbox_widget.setStyleSheet("QCheckBox { margin: 0px; padding: 0px; }")
+
+    @staticmethod
+    def style_state_enabled():
+        if hasattr(QtWidgets.QStyle, "StateFlag"):
+            return QtWidgets.QStyle.StateFlag.State_Enabled
+        return QtWidgets.QStyle.State_Enabled
+
+    @staticmethod
+    def style_state_on():
+        if hasattr(QtWidgets.QStyle, "StateFlag"):
+            return QtWidgets.QStyle.StateFlag.State_On
+        return QtWidgets.QStyle.State_On
+
+    @staticmethod
+    def style_state_off():
+        if hasattr(QtWidgets.QStyle, "StateFlag"):
+            return QtWidgets.QStyle.StateFlag.State_Off
+        return QtWidgets.QStyle.State_Off
+
+    @staticmethod
+    def style_state_none():
+        if hasattr(QtWidgets.QStyle, "StateFlag"):
+            return QtWidgets.QStyle.StateFlag(0)
+        return QtWidgets.QStyle.State(0)
+
+    @staticmethod
+    def style_state_no_change():
+        if hasattr(QtWidgets.QStyle, "StateFlag"):
+            return QtWidgets.QStyle.StateFlag.State_NoChange
+        return QtWidgets.QStyle.State_NoChange
+
+    @staticmethod
+    def checkbox_control_element():
+        if hasattr(QtWidgets.QStyle, "ControlElement"):
+            return QtWidgets.QStyle.ControlElement.CE_CheckBox
+        return QtWidgets.QStyle.CE_CheckBox
+
+    @staticmethod
+    def pixel_metric_indicator_width():
+        if hasattr(QtWidgets.QStyle, "PixelMetric"):
+            return QtWidgets.QStyle.PixelMetric.PM_IndicatorWidth
+        return QtWidgets.QStyle.PM_IndicatorWidth
+
+    @staticmethod
+    def pixel_metric_indicator_height():
+        if hasattr(QtWidgets.QStyle, "PixelMetric"):
+            return QtWidgets.QStyle.PixelMetric.PM_IndicatorHeight
+        return QtWidgets.QStyle.PM_IndicatorHeight
+
+    @staticmethod
+    def checked_state():
+        if hasattr(QtCore.Qt, "CheckState"):
+            return QtCore.Qt.CheckState.Checked
+        return QtCore.Qt.Checked
+
+    @staticmethod
+    def unchecked_state():
+        if hasattr(QtCore.Qt, "CheckState"):
+            return QtCore.Qt.CheckState.Unchecked
+        return QtCore.Qt.Unchecked
+
+    @staticmethod
+    def partially_checked_state():
+        if hasattr(QtCore.Qt, "CheckState"):
+            return QtCore.Qt.CheckState.PartiallyChecked
+        return QtCore.Qt.PartiallyChecked
+
+    def setCheckState(self, state):
+        self._check_state = state
+        self._checkbox_widget.blockSignals(True)
+        self._checkbox_widget.setCheckState(state)
+        self._checkbox_widget.blockSignals(False)
+        self.update_checkbox_geometry()
+        self.viewport().update()
+
+    def checkState(self):
+        return self._check_state
+
+    def paintSection(self, painter, rect, logical_index):
+        super(CheckableHeaderView, self).paintSection(painter, rect, logical_index)
+        if logical_index == self.checkbox_section:
+            self.update_checkbox_geometry()
+
+    def mousePressEvent(self, event):
+        logical_index = self.logicalIndexAt(event.pos())
+        if logical_index == self.checkbox_section:
+            if self._check_state == self.checked_state():
+                state = self.unchecked_state()
+            else:
+                state = self.checked_state()
+            self.setCheckState(state)
+            self.checkStateChanged.emit(state)
+            event.accept()
+            return
+        super(CheckableHeaderView, self).mousePressEvent(event)
+
+    def sectionRect(self, logical_index):
+        return QtCore.QRect(
+            self.sectionViewportPosition(logical_index),
+            0,
+            self.sectionSize(logical_index),
+            self.height(),
+        )
+
+    def checkboxRect(self, rect):
+        indicator_width = self._checkbox_widget.sizeHint().width()
+        indicator_height = self._checkbox_widget.sizeHint().height()
+        x = rect.x() + (rect.width() - indicator_width) // 2
+        y = rect.y() + (rect.height() - indicator_height) // 2
+        return QtCore.QRect(x, y, indicator_width, indicator_height)
+
+    def update_checkbox_geometry(self):
+        if self.checkbox_section < 0:
+            return
+        section_rect = self.sectionRect(self.checkbox_section)
+        self._checkbox_widget.setGeometry(self.checkboxRect(section_rect))
+        self._checkbox_widget.raise_()
+
+
+class CenteredCheckboxDelegate(QtWidgets.QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super(CenteredCheckboxDelegate, self).__init__(parent)
+
+    @staticmethod
+    def style_state_none():
+        if hasattr(QtWidgets.QStyle, "StateFlag"):
+            return QtWidgets.QStyle.StateFlag(0)
+        return QtWidgets.QStyle.State(0)
+
+    @staticmethod
+    def checked_state():
+        if hasattr(QtCore.Qt, "CheckState"):
+            return QtCore.Qt.CheckState.Checked
+        return QtCore.Qt.Checked
+
+    @staticmethod
+    def unchecked_state():
+        if hasattr(QtCore.Qt, "CheckState"):
+            return QtCore.Qt.CheckState.Unchecked
+        return QtCore.Qt.Unchecked
+
+    @staticmethod
+    def item_is_enabled_flag():
+        if hasattr(QtCore.Qt, "ItemFlag"):
+            return QtCore.Qt.ItemFlag.ItemIsEnabled
+        return QtCore.Qt.ItemIsEnabled
+
+    @staticmethod
+    def style_state_enabled():
+        if hasattr(QtWidgets.QStyle, "StateFlag"):
+            return QtWidgets.QStyle.StateFlag.State_Enabled
+        return QtWidgets.QStyle.State_Enabled
+
+    @staticmethod
+    def style_state_on():
+        if hasattr(QtWidgets.QStyle, "StateFlag"):
+            return QtWidgets.QStyle.StateFlag.State_On
+        return QtWidgets.QStyle.State_On
+
+    @staticmethod
+    def style_state_off():
+        if hasattr(QtWidgets.QStyle, "StateFlag"):
+            return QtWidgets.QStyle.StateFlag.State_Off
+        return QtWidgets.QStyle.State_Off
+
+    @staticmethod
+    def primitive_checkbox():
+        if hasattr(QtWidgets.QStyle, "PrimitiveElement"):
+            return QtWidgets.QStyle.PrimitiveElement.PE_IndicatorCheckBox
+        return QtWidgets.QStyle.PE_IndicatorCheckBox
+
+    @staticmethod
+    def primitive_panel_item_view_item():
+        if hasattr(QtWidgets.QStyle, "PrimitiveElement"):
+            return QtWidgets.QStyle.PrimitiveElement.PE_PanelItemViewItem
+        return QtWidgets.QStyle.PE_PanelItemViewItem
+
+    @staticmethod
+    def pixel_metric_indicator_width():
+        if hasattr(QtWidgets.QStyle, "PixelMetric"):
+            return QtWidgets.QStyle.PixelMetric.PM_IndicatorWidth
+        return QtWidgets.QStyle.PM_IndicatorWidth
+
+    @staticmethod
+    def pixel_metric_indicator_height():
+        if hasattr(QtWidgets.QStyle, "PixelMetric"):
+            return QtWidgets.QStyle.PixelMetric.PM_IndicatorHeight
+        return QtWidgets.QStyle.PM_IndicatorHeight
+
+    @staticmethod
+    def event_mouse_release():
+        if hasattr(QtCore.QEvent, "Type"):
+            return QtCore.QEvent.Type.MouseButtonRelease
+        return QtCore.QEvent.MouseButtonRelease
+
+    @staticmethod
+    def event_mouse_dblclick():
+        if hasattr(QtCore.QEvent, "Type"):
+            return QtCore.QEvent.Type.MouseButtonDblClick
+        return QtCore.QEvent.MouseButtonDblClick
+
+    @staticmethod
+    def event_key_press():
+        if hasattr(QtCore.QEvent, "Type"):
+            return QtCore.QEvent.Type.KeyPress
+        return QtCore.QEvent.KeyPress
+
+    @staticmethod
+    def key_space():
+        if hasattr(QtCore.Qt, "Key"):
+            return QtCore.Qt.Key.Key_Space
+        return QtCore.Qt.Key_Space
+
+    @staticmethod
+    def key_select():
+        if hasattr(QtCore.Qt, "Key"):
+            return QtCore.Qt.Key.Key_Select
+        return QtCore.Qt.Key_Select
+
+    @staticmethod
+    def check_state_role():
+        if hasattr(QtCore.Qt, "ItemDataRole"):
+            return QtCore.Qt.ItemDataRole.CheckStateRole
+        return QtCore.Qt.CheckStateRole
+
+    def checkbox_rect(self, option):
+        style = (
+            option.widget.style()
+            if option.widget is not None
+            else QtWidgets.QApplication.style()
+        )
+        indicator_width = style.pixelMetric(self.pixel_metric_indicator_width())
+        indicator_height = style.pixelMetric(self.pixel_metric_indicator_height())
+        x = option.rect.x() + (option.rect.width() - indicator_width) // 2
+        y = option.rect.y() + (option.rect.height() - indicator_height) // 2
+        return QtCore.QRect(x, y, indicator_width, indicator_height)
+
+    def paint(self, painter, option, index):
+        view_option = QtWidgets.QStyleOptionViewItem(option)
+        self.initStyleOption(view_option, index)
+        view_option.text = ""
+
+        style = (
+            option.widget.style()
+            if option.widget is not None
+            else QtWidgets.QApplication.style()
+        )
+        style.drawPrimitive(
+            self.primitive_panel_item_view_item(), view_option, painter, option.widget
+        )
+
+        checkbox_option = QtWidgets.QStyleOptionButton()
+        checkbox_option.rect = self.checkbox_rect(option)
+        checkbox_option.state = self.style_state_none()
+        if index.flags() & self.item_is_enabled_flag():
+            checkbox_option.state |= self.style_state_enabled()
+        if index.data(self.check_state_role()) == self.checked_state():
+            checkbox_option.state |= self.style_state_on()
+        else:
+            checkbox_option.state |= self.style_state_off()
+
+        style.drawPrimitive(self.primitive_checkbox(), checkbox_option, painter)
+
+    def editorEvent(self, event, model, option, index):
+        if not (index.flags() & self.item_is_enabled_flag()):
+            return False
+
+        if event.type() in (self.event_mouse_release(), self.event_mouse_dblclick()):
+            if not self.checkbox_rect(option).contains(event.pos()):
+                return False
+        elif event.type() == self.event_key_press():
+            if event.key() not in (self.key_space(), self.key_select()):
+                return False
+        else:
+            return False
+
+        new_state = self.unchecked_state()
+        if index.data(self.check_state_role()) != self.checked_state():
+            new_state = self.checked_state()
+        return model.setData(index, new_state, self.check_state_role())
+
+
+class TargetNameDelegate(QtWidgets.QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super(TargetNameDelegate, self).__init__(parent)
+
+    def createEditor(self, parent, option, index):
+        editor = super(TargetNameDelegate, self).createEditor(parent, option, index)
+        if isinstance(editor, QtWidgets.QLineEdit):
+            editor.setFrame(True)
+            editor.setStyleSheet(
+                "QLineEdit {"
+                " border: 1px solid palette(mid);"
+                " padding: 0 2px;"
+                " background: palette(base);"
+                "}"
+            )
+        return editor
+
+    def updateEditorGeometry(self, editor, option, index):
+        rect = QtCore.QRect(option.rect)
+        rect.adjust(1, 1, -1, -1)
+        editor.setGeometry(rect)
 
 
 class VectorBatchSaverDialog(QtWidgets.QDialog, FORM_CLASS):
@@ -41,3 +368,61 @@ class VectorBatchSaverDialog(QtWidgets.QDialog, FORM_CLASS):
         # http://qt-project.org/doc/qt-4.8/designer-using-a-ui-file.html
         # #widgets-and-dialogs-with-auto-connect
         self.setupUi(self)
+        if hasattr(QtCore.Qt, "Orientation"):
+            horizontal_orientation = QtCore.Qt.Orientation.Horizontal
+        else:
+            horizontal_orientation = QtCore.Qt.Horizontal
+        self.layerTableHeader = CheckableHeaderView(
+            horizontal_orientation, self.layerTableWidget
+        )
+        self.layerTableWidget.setHorizontalHeader(self.layerTableHeader)
+        self.layerTableWidget.setItemDelegateForColumn(
+            0, CenteredCheckboxDelegate(self.layerTableWidget)
+        )
+        self.layerTableWidget.setItemDelegateForColumn(
+            2, TargetNameDelegate(self.layerTableWidget)
+        )
+        self._resizing_name_columns = False
+        self.layerTableWidget.horizontalHeader().sectionResized.connect(
+            self.handle_section_resized
+        )
+
+    def showEvent(self, event):
+        super(VectorBatchSaverDialog, self).showEvent(event)
+        self.equalize_name_columns()
+
+    def equalize_name_columns(self):
+        checkbox_width = self.layerTableWidget.columnWidth(0)
+        clear_width = self.layerTableWidget.columnWidth(3)
+        available_width = max(
+            0,
+            self.layerTableWidget.viewport().width() - checkbox_width - clear_width,
+        )
+        column_width = available_width // 2
+        if column_width > 0:
+            self.layerTableWidget.setColumnWidth(1, column_width)
+            self.layerTableWidget.setColumnWidth(2, column_width)
+
+    def handle_section_resized(self, logical_index, old_size, new_size):
+        if self._resizing_name_columns:
+            return
+        if logical_index not in (1, 2):
+            return
+
+        other_index = 2 if logical_index == 1 else 1
+        available_width = max(
+            0,
+            self.layerTableWidget.viewport().width() - self.layerTableWidget.columnWidth(0),
+        )
+        available_width = max(
+            0,
+            available_width - self.layerTableWidget.columnWidth(3),
+        )
+        min_width = 80
+        bounded_new_size = max(min_width, min(new_size, available_width - min_width))
+        other_size = max(min_width, available_width - bounded_new_size)
+
+        self._resizing_name_columns = True
+        self.layerTableWidget.setColumnWidth(logical_index, bounded_new_size)
+        self.layerTableWidget.setColumnWidth(other_index, other_size)
+        self._resizing_name_columns = False
