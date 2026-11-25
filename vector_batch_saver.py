@@ -92,6 +92,13 @@ class VectorBatchSaver:
     INFO_LEVEL = getattr(Qgis.MessageLevel, "Info", Qgis.Info)
     WARNING_LEVEL = getattr(Qgis.MessageLevel, "Warning", Qgis.Warning)
     CRITICAL_LEVEL = getattr(Qgis.MessageLevel, "Critical", Qgis.Critical)
+    NOTIFY_MAX_LAYER_NAMES = 5
+    # QGIS 3 exposes QgsMapLayer.VectorLayer, QGIS 4 uses Qgis.LayerType.Vector.
+    VECTOR_LAYER_TYPE = getattr(
+        QgsMapLayer,
+        "VectorLayer",
+        getattr(getattr(Qgis, "LayerType", None), "Vector", 0),
+    )
 
     def __init__(self, iface):
         """Constructor.
@@ -398,13 +405,9 @@ class VectorBatchSaver:
         """Run method that performs all the real work"""
         # show the dialog
         self.dlg.show()
-        layers = [
-            tree_layer.layer()
-            for tree_layer in QgsProject.instance().layerTreeRoot().findLayers()
-        ]
-        vector_layers = [
-            layer for layer in layers if layer.type() == QgsMapLayer.VectorLayer
-        ]
+        vector_layers, skipped_layers = self.project_vector_layers_report()
+        if skipped_layers:
+            self.notify_skipped_layers(skipped_layers)
 
         if not vector_layers:
             self.iface.messageBar().pushMessage(
@@ -433,6 +436,24 @@ class VectorBatchSaver:
             if os.path.exists(output_dir):
                 self.save_layers()
             self.commit_target_name_preferences()
+
+    def notify_skipped_layers(self, skipped_layers):
+        """Tell the user which layer-tree nodes had no loaded layer."""
+        if self.iface is None:
+            return
+
+        names = [name or "(unnamed)" for name in skipped_layers]
+        shown_names = ", ".join(names[: self.NOTIFY_MAX_LAYER_NAMES])
+        if len(names) > self.NOTIFY_MAX_LAYER_NAMES:
+            shown_names += ", ..."
+        self.iface.messageBar().pushMessage(
+            "Unavailable layers skipped",
+            "{0} layer(s) have no loaded data source and were skipped: {1}".format(
+                len(names), shown_names
+            ),
+            level=self.WARNING_LEVEL,
+            duration=8,
+        )
 
     def populate_layer_table(self, vector_layers):
         self._updating_layer_checks = True
@@ -649,6 +670,116 @@ class VectorBatchSaver:
             candidate_base = "{} ({})".format(base_name, suffix)
             suffix += 1
 
+    @staticmethod
+    def layer_type(layer):
+        """Return a layer type, or ``None`` when it cannot be determined.
+
+        ``None`` covers both an unresolved layer-tree node and a layer whose
+        C++ object was already deleted (``RuntimeError`` on attribute access).
+        """
+        if layer is None:
+            return None
+        try:
+            return layer.type()
+        except (AttributeError, RuntimeError):
+            return None
+
+    @classmethod
+    def is_vector_layer(cls, layer):
+        """Return True when ``layer`` is a live vector layer.
+
+        ``QgsLayerTreeLayer.layer()`` returns ``None`` for nodes without a
+        loaded layer (broken/unavailable data source, layer removed from the
+        project while the node stays in the tree, ...) and touching a layer
+        whose C++ object was already deleted raises ``RuntimeError``. Both
+        cases used to abort the whole plugin with
+        ``AttributeError: 'NoneType' object has no attribute 'type'``.
+        """
+        return cls.layer_type(layer) == cls.VECTOR_LAYER_TYPE
+
+    def resolve_tree_layer(self, project, tree_layer):
+        """Resolve the live layer behind a layer-tree node, if any.
+
+        Resolving by ``layerId()`` through the project registry is preferred
+        over ``QgsLayerTreeLayer.layer()``: unresolved nodes (missing data
+        source, layer unregistered from the project, project still loading)
+        yield ``None`` from the registry instead of a dangling object.
+        """
+        try:
+            layer_id = tree_layer.layerId()
+        except (AttributeError, RuntimeError):
+            layer_id = ""
+
+        layer = project.mapLayer(layer_id) if layer_id else None
+        if layer is not None:
+            return layer
+
+        try:
+            return tree_layer.layer()
+        except (AttributeError, RuntimeError):
+            return None
+
+    @staticmethod
+    def tree_layer_name(tree_layer):
+        """Return the display name of a layer-tree node (never raises)."""
+        try:
+            return tree_layer.name() or ""
+        except (AttributeError, RuntimeError):
+            return ""
+
+    def project_vector_layers_report(self):
+        """Return ``(vector_layers, skipped_layer_names)`` for the project.
+
+        Broken or unresolved layer-tree nodes are skipped so a single bad
+        layer cannot stop the export of all other layers. Their names are
+        returned as well, so the caller can warn the user about them.
+        """
+        project = QgsProject.instance()
+        root = project.layerTreeRoot() if project is not None else None
+        if root is None:
+            return [], []
+
+        vector_layers = []
+        skipped_names = []
+        seen_ids = set()
+        for tree_layer in root.findLayers():
+            if tree_layer is None:
+                continue
+
+            layer = self.resolve_tree_layer(project, tree_layer)
+            layer_type = self.layer_type(layer)
+            if layer_type is None:
+                self.add_skipped_layer_name(
+                    skipped_names, self.tree_layer_name(tree_layer)
+                )
+                continue
+
+            if layer_type != self.VECTOR_LAYER_TYPE:
+                continue
+
+            try:
+                layer_id = layer.id()
+            except (AttributeError, RuntimeError):
+                self.add_skipped_layer_name(
+                    skipped_names, self.tree_layer_name(tree_layer)
+                )
+                continue
+            if not layer_id or layer_id in seen_ids:
+                continue
+            seen_ids.add(layer_id)
+            vector_layers.append(layer)
+        return vector_layers, skipped_names
+
+    @staticmethod
+    def add_skipped_layer_name(skipped_names, name):
+        if name not in skipped_names:
+            skipped_names.append(name)
+
+    def project_vector_layers(self):
+        """Collect the vector layers of the current project (None-safe)."""
+        vector_layers, _skipped_names = self.project_vector_layers_report()
+        return vector_layers
+
     def stable_layer_sort_key(self, layer, original_name):
         source = layer.source() if layer is not None else ""
         return (
@@ -658,11 +789,7 @@ class VectorBatchSaver:
         )
 
     def save_layer_format(self, format):
-        layers = {
-            tree_layer.layer().id(): tree_layer.layer()
-            for tree_layer in QgsProject.instance().layerTreeRoot().findLayers()
-            if tree_layer.layer().type() == QgsMapLayer.VectorLayer
-        }
+        layers = {layer.id(): layer for layer in self.project_vector_layers()}
         output_dir = os.path.join(self.dlg.lineEdit.text(), format)
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)

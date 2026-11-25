@@ -4,7 +4,7 @@ qgisMinimumVersion=3.0
 qgisMaximumVersion=4.99
 description=Saves multiple layers in different formats in a batch mode.
 
-version=1.0
+version=1.1
 author=changsan9527
 email=changsan9527@gmail.com
 
@@ -22,4 +22,5 @@ experimental=False
 deprecated=False
 license=GPL-3
 
-changelog=v1.0 [2026-07-05]: Compatible with QGIS 4.
+changelog=v1.1 [2026-07-06]: Skip unavailable/broken layers instead of aborting with 'NoneType' object has no attribute 'type'', and warn about skipped layers.
+v1.0 [2026-07-05]: Compatible with QGIS 4.
