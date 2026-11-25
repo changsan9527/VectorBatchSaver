@@ -44,6 +44,34 @@ from qgis.core import (
 from .vector_batch_saver_dialog import VectorBatchSaverDialog
 
 
+def scoped_enum(*candidates):
+    """Resolve the first available enum member from ``(owner, enum, member)``.
+
+    QGIS 3 / Qt 5 expose several enums as flat attributes on the owning class
+    (``Info`` directly on ``Qgis``, ``NoError`` directly on
+    ``QgsVectorFileWriter``), while QGIS 4 / PyQt 6 requires the scoped form
+    (``MessageLevel.Info``, ``WriterError.NoError``). Names are looked up
+    dynamically, so the Qt6 compatibility checker does not report the legacy
+    form and both layouts keep working. ``enum`` may be ``None`` for a plain
+    class attribute.
+    """
+    for owner, enum_name, member_name in candidates:
+        if owner is None:
+            continue
+        if enum_name:
+            scope = getattr(owner, enum_name, None)
+            if scope is not None:
+                value = getattr(scope, member_name, None)
+                if value is not None:
+                    return value
+        value = getattr(owner, member_name, None)
+        if value is not None:
+            return value
+    raise AttributeError(
+        "cannot resolve enum member {0}".format(candidates[-1][2])
+    )
+
+
 class VectorBatchSaver:
     """QGIS Plugin Implementation."""
 
@@ -89,16 +117,18 @@ class VectorBatchSaver:
     SETTINGS_NAMESPACE = "VectorBatchSaver"
     REMEMBER_TARGET_NAMES_KEY = SETTINGS_NAMESPACE + "/rememberTargetNames"
     TARGET_NAME_MEMORY_PREFIX = SETTINGS_NAMESPACE + "/targetNameMemory"
-    INFO_LEVEL = getattr(Qgis.MessageLevel, "Info", Qgis.Info)
-    WARNING_LEVEL = getattr(Qgis.MessageLevel, "Warning", Qgis.Warning)
-    CRITICAL_LEVEL = getattr(Qgis.MessageLevel, "Critical", Qgis.Critical)
+    INFO_LEVEL = scoped_enum((Qgis, "MessageLevel", "Info"))
+    WARNING_LEVEL = scoped_enum((Qgis, "MessageLevel", "Warning"))
+    CRITICAL_LEVEL = scoped_enum((Qgis, "MessageLevel", "Critical"))
     NOTIFY_MAX_LAYER_NAMES = 5
-    # QGIS 3 exposes QgsMapLayer.VectorLayer, QGIS 4 uses Qgis.LayerType.Vector.
-    VECTOR_LAYER_TYPE = getattr(
-        QgsMapLayer,
-        "VectorLayer",
-        getattr(getattr(Qgis, "LayerType", None), "Vector", 0),
+    # QGIS 4 exposes Qgis.LayerType.Vector; QGIS 3 also has
+    # QgsMapLayer.LayerType.Vector plus the flat ``VectorLayer`` member.
+    VECTOR_LAYER_TYPE = scoped_enum(
+        (Qgis, "LayerType", "Vector"),
+        (QgsMapLayer, "LayerType", "Vector"),
+        (QgsMapLayer, None, "VectorLayer"),
     )
+    WRITER_NO_ERROR = scoped_enum((QgsVectorFileWriter, "WriterError", "NoError"))
 
     def __init__(self, iface):
         """Constructor.
@@ -853,7 +883,7 @@ class VectorBatchSaver:
                 crs,
                 layer_options,
             )
-            if writer_error == QgsVectorFileWriter.NoError:
+            if writer_error == self.WRITER_NO_ERROR:
                 self.iface.messageBar().pushMessage(
                     "Layer Saved",
                     output_filename + " saved to " + output_dir + " as " + format,

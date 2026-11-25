@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 
 try:
-    from qgis.core import QgsMapLayer
+    import qgis.core  # noqa: F401  # probe for the QGIS bindings
 
     import vector_batch_saver as vbs_module
     from vector_batch_saver import VectorBatchSaver
@@ -41,6 +41,12 @@ if not QGIS_AVAILABLE:  # pragma: no cover - fallback for package-style imports
         QGIS_AVAILABLE = True
     except Exception as exc:  # pragma: no cover
         QGIS_IMPORT_ERROR = str(exc)
+
+if QGIS_AVAILABLE:  # pragma: no cover - constants depend on the bindings
+    VECTOR_LAYER_TYPE = VectorBatchSaver.VECTOR_LAYER_TYPE
+    # Any value that is not the vector layer type; keeps the tests
+    # independent of which enum layout the running QGIS exposes.
+    OTHER_LAYER_TYPE = object()
 
 
 class _FakeLayer:
@@ -177,16 +183,16 @@ class VectorBatchSaverLayerFilterTest(unittest.TestCase):
         self.assertFalse(VectorBatchSaver.is_vector_layer(object()))
 
     def test_vector_layer_is_vector(self):
-        layer = _FakeLayer(QgsMapLayer.VectorLayer)
+        layer = _FakeLayer(VECTOR_LAYER_TYPE)
         self.assertTrue(VectorBatchSaver.is_vector_layer(layer))
 
     def test_raster_layer_is_not_vector(self):
-        layer = _FakeLayer(QgsMapLayer.RasterLayer)
+        layer = _FakeLayer(OTHER_LAYER_TYPE)
         self.assertFalse(VectorBatchSaver.is_vector_layer(layer))
 
     def test_broken_nodes_are_skipped_and_reported(self):
-        vector_layer = _FakeLayer(QgsMapLayer.VectorLayer, "vector")
-        raster_layer = _FakeLayer(QgsMapLayer.RasterLayer, "raster")
+        vector_layer = _FakeLayer(VECTOR_LAYER_TYPE, "vector")
+        raster_layer = _FakeLayer(OTHER_LAYER_TYPE, "raster")
         root = _FakeRoot(
             [
                 _FakeTreeLayer(vector_layer),
@@ -204,7 +210,7 @@ class VectorBatchSaverLayerFilterTest(unittest.TestCase):
 
     def test_registry_lookup_avoids_dangling_layer(self):
         """A node whose layer() is dead but whose id is registered works."""
-        layer = _FakeLayer(QgsMapLayer.VectorLayer, "registered")
+        layer = _FakeLayer(VECTOR_LAYER_TYPE, "registered")
         node = _FakeTreeLayer(
             _DeletedLayer(), name="registered", layer_id="registered"
         )
@@ -219,7 +225,7 @@ class VectorBatchSaverLayerFilterTest(unittest.TestCase):
         self.assertEqual(self.plugin.project_vector_layers(), [])
 
     def test_duplicate_nodes_are_reported_once(self):
-        layer = _FakeLayer(QgsMapLayer.VectorLayer, "dup")
+        layer = _FakeLayer(VECTOR_LAYER_TYPE, "dup")
         root = _FakeRoot(
             [
                 _FakeTreeLayer(layer),
@@ -256,6 +262,59 @@ class VectorBatchSaverLayerFilterTest(unittest.TestCase):
     def test_notify_skipped_layers_without_iface_is_safe(self):
         self.plugin.iface = None
         self.plugin.notify_skipped_layers(["broken"])
+
+
+class _EnumScope:
+    """Scoped enum container, e.g. ``Qgis.MessageLevel``."""
+
+    Info = 3
+    NoError = 0
+
+
+class _ScopedEnumOwner:
+    MessageLevel = _EnumScope
+    WriterError = _EnumScope
+
+
+class _FlatEnumOwner:
+    """Legacy QGIS 3 style: enum members directly on the class."""
+
+    Info = 3
+    NoError = 0
+
+
+@unittest.skipUnless(
+    QGIS_AVAILABLE, "QGIS bindings unavailable: " + QGIS_IMPORT_ERROR
+)
+class ScopedEnumTest(unittest.TestCase):
+    """Qt6 compatibility: scoped enums first, flat legacy names second."""
+
+    def test_scoped_enum_uses_scoped_form(self):
+        value = vbs_module.scoped_enum((_ScopedEnumOwner, "MessageLevel", "Info"))
+        self.assertEqual(value, 3)
+
+    def test_scoped_enum_falls_back_to_flat_member(self):
+        value = vbs_module.scoped_enum((_FlatEnumOwner, "MessageLevel", "Info"))
+        self.assertEqual(value, 3)
+
+    def test_scoped_enum_supports_plain_attribute(self):
+        value = vbs_module.scoped_enum((_FlatEnumOwner, None, "Info"))
+        self.assertEqual(value, 3)
+
+    def test_scoped_enum_keeps_zero_members(self):
+        value = vbs_module.scoped_enum((_ScopedEnumOwner, "WriterError", "NoError"))
+        self.assertEqual(value, 0)
+
+    def test_scoped_enum_skips_none_owner(self):
+        value = vbs_module.scoped_enum(
+            (None, "MessageLevel", "Info"),
+            (_FlatEnumOwner, "MessageLevel", "Info"),
+        )
+        self.assertEqual(value, 3)
+
+    def test_scoped_enum_raises_when_unresolvable(self):
+        with self.assertRaises(AttributeError):
+            vbs_module.scoped_enum((object(), "MessageLevel", "Info"))
 
 
 if __name__ == "__main__":
